@@ -42,8 +42,9 @@
 
         // スローモーション用の変数を追加
         const normalTimeScale = 1.0;  // 通常の時間スケール
-        const slowTimeScale = 0.3;    // スローモーション時の時間スケール
-        const slowMotionDistance = 200; // スローモーションが発動する距離
+        const slowTimeScale = 0.3;    // 元の値に戻す
+        const slowMotionDistance = 200; // 元の値に戻す
+        const glowIntensity = 0.1;    // 追加した値を削除
         let currentTimeScale = normalTimeScale;
 
         // ベクトル角度をチェックする関数を追加
@@ -156,11 +157,11 @@
         }
 
         // Game variables の後に追加
-        // パーティクル関連の定数を修正
+        // パーティクル関連の定数を元に戻す
         const particles = [];
-        const particleCount = 25;  // パーティクル数を増加
-        const particleLifetime = 90;  // 寿命を延長
-        const particleSize = 5;  // サイズを大きく
+        const particleCount = 15;
+        const particleLifetime = 60;
+        const particleSize = 3;
 
         // Particleクラスを修正
         class Particle {
@@ -170,13 +171,12 @@
                 this.color = color;
                 this.lifetime = particleLifetime;
                 const angle = Math.random() * Math.PI * 2;
-                const speed = 2 + Math.random() * 4; // 速度を上げる
+                const speed = 1 + Math.random() * 3;
                 this.dx = Math.cos(angle) * speed;
                 this.dy = Math.sin(angle) * speed;
-                this.size = particleSize + Math.random() * 3; // サイズをランダムに
+                this.size = particleSize;
                 this.rotation = Math.random() * Math.PI * 2;
-                this.rotationSpeed = (Math.random() - 0.5) * 0.4;
-                this.alpha = 1.0;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.2;
             }
 
             update() {
@@ -184,8 +184,8 @@
                 this.y += this.dy;
                 this.lifetime--;
                 this.rotation += this.rotationSpeed;
-                this.size *= 0.98;
-                this.alpha = this.lifetime / particleLifetime;
+                this.size *= 0.97;
+                return this.lifetime > 0;  // 生存判定を戻り値として返す
             }
 
             draw(ctx) {
@@ -193,37 +193,43 @@
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.rotation);
                 
-                // グローエフェクトを追加
                 ctx.shadowColor = this.color;
                 ctx.shadowBlur = 10;
-                
-                // 半透明の重なりを作成
                 ctx.globalCompositeOperation = 'lighter';
-                ctx.fillStyle = `${this.color}${Math.floor(this.alpha * 255).toString(16).padStart(2, '0')}`;
+                ctx.fillStyle = `${this.color}${Math.floor((this.lifetime/particleLifetime) * 255).toString(16).padStart(2, '0')}`;
                 ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
                 
                 ctx.restore();
             }
         }
 
-        // ブロック破壊時のパーティクル生成関数を修正してよりダイナミックなエフェクトを生成
+        // パーティクル生成関数を元に戻す
         function createDestroyEffect(brick) {
             const centerX = brick.x + brickWidth/2;
             const centerY = brick.y + brickHeight/2;
             
-            // 破壊時の速度を反映したパーティクルも追加
-            const speedScale = Math.sqrt(brick.dx * brick.dx + brick.dy * brick.dy);
-            
             for(let i = 0; i < particleCount; i++) {
-                const particle = new Particle(centerX, centerY, brick.color);
-                // ブロックの移動方向も考慮
-                particle.dx += brick.dx * 0.5;
-                particle.dy += brick.dy * 0.5;
-                // 速度に応じてパーティクルの初期速度を調整
-                particle.dx *= (1 + speedScale * 0.2);
-                particle.dy *= (1 + speedScale * 0.2);
-                particles.push(particle);
+                particles.push(new Particle(centerX, centerY, brick.color));
             }
+        }
+
+        // updateParticles関数を修正
+        function updateParticles() {
+            for(let i = particles.length - 1; i >= 0; i--) {
+                // update()の戻り値で生存判定を行う
+                if(!particles[i].update()) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // パーティクル描画関数を改善
+        function drawParticles() {
+            if(particles.length === 0) return;
+            
+            ctx.save();
+            particles.forEach(particle => particle.draw(ctx));
+            ctx.restore();
         }
 
         // マウス移動のイベントリスナーを追加
@@ -320,7 +326,7 @@
                         ctx.restore();
                         ctx.closePath();
 
-                        // 当たり判定用の頂点情報を保存
+                        // 当��り判定用の頂点情報を保存
                         bricks[c][r].vertices = getVertices(bricks[c][r].shape, brickX, brickY, brickWidth, brickHeight, brick.rotation);
                     }
                 }
@@ -431,6 +437,7 @@
         }
 
         // 物理演算の更新関数を簡略化
+        // updatePhysics関数にパドルとの衝突判定を追加
         function updatePhysics() {
             for(let c=0; c < brickColumnCount; c++) {
                 for(let r=0; r < brickRowCount; r++) {
@@ -468,6 +475,24 @@
                             createDestroyEffect(brick);  // パーティクル生成を追加
                             brick.status = 0;
                         }
+
+                        // パドルとの衝突判定を追加
+                        if(brick.y + brickHeight > canvas.height - paddleHeight) {
+                            if(brick.x + brickWidth > paddleX && brick.x < paddleX + paddleWidth) {
+                                // パドルとの衝突時の処���
+                                brick.y = canvas.height - paddleHeight - brickHeight;
+                                brick.dy = -Math.abs(brick.dy) * brick.restitution;  // 上向きに反射
+                                
+                                // パドルの位置に応じて横方向の速度を変更
+                                const hitPos = (brick.x + brickWidth/2 - paddleX) / paddleWidth;
+                                brick.dx += (hitPos - 0.5) * 4;  // パドルの端に近いほど大きく角度を変える
+                                
+                                // 速度の制限
+                                const limitedVelocity = limitSpeed(brick.dx, brick.dy, maxBlockSpeed);
+                                brick.dx = limitedVelocity.x;
+                                brick.dy = limitedVelocity.y;
+                            }
+                        }
                     }
                 }
             }
@@ -477,14 +502,18 @@
         function updateParticles() {
             for(let i = particles.length - 1; i >= 0; i--) {
                 particles[i].update();
-                if(particles[i].lifetime <= 0) {
+                if(particles[i].isDead()) {
                     particles.splice(i, 1);
                 }
             }
         }
 
         function drawParticles() {
-            particles.forEach(particle => particle.draw(ctx));
+            ctx.save();
+            particles.forEach(particle => {
+                particle.draw(ctx);
+            });
+            ctx.restore();
         }
 
         // collisionDetection関数を改善
@@ -643,7 +672,7 @@
             x += dx * currentTimeScale;
             y += dy * currentTimeScale;
 
-            // スローモーション効果を視覚的に表現（オプション）
+            // スローモーション効果を単純な青いオーバーレイに戻す
             if (currentTimeScale < normalTimeScale) {
                 ctx.fillStyle = `rgba(0, 255, 255, ${(1 - currentTimeScale) * 0.1})`;
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
