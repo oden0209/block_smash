@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ブロック崩し</title>
+    <style>
+        canvas {
+            border: 2px solid black;
+            display: block;
+            margin: 0 auto;
+        }
+        body {
+            background: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="480" height="320"></canvas>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Game variables
+        let x = canvas.width/2;
+        let y = canvas.height-30;
+        let dx = 2;
+        let dy = -2;
+        const ballRadius = 8;  // ボールのサイズを大きく
+        const paddleHeight = 10;
+        const paddleWidth = 75;
+        let paddleX = (canvas.width-paddleWidth)/2;
+
+        // 速度上限を追加
+        const maxBallSpeed = 3;  // ボールの最大速度
+        const minBallSpeed = 2;  // ボールの最小速度
+        const maxBlockSpeed = 5; // ブロックの最大速度
+
+        // スローモーション用の変数を追加
+        const normalTimeScale = 1.0;  // 通常の時間スケール
+        const slowTimeScale = 0.3;    // スローモーション時の時間スケール
+        const slowMotionDistance = 200; // スローモーションが発動する距離
+        let currentTimeScale = normalTimeScale;
+
+        // ベクトル角度をチェックする関数を追加
+        const minAngleDegrees = 5; // 最小角度（度）
+
+        // 新しい補助関数を追加
+        function adjustVector(vx, vy) {
+            const angle = Math.atan2(vy, vx);
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            const angleDegrees = angle * 180 / Math.PI;
+            
+            // x軸との角度が小さすぎる場合
+            if (Math.abs(angleDegrees) < minAngleDegrees) {
+                const newAngle = (angleDegrees >= 0 ? minAngleDegrees : -minAngleDegrees) * Math.PI / 180;
+                return {
+                    x: speed * Math.cos(newAngle),
+                    y: speed * Math.sin(newAngle)
+                };
+            }
+            // y軸との角度が小さすぎる場合
+            if (Math.abs(Math.abs(angleDegrees) - 90) < minAngleDegrees) {
+                const newAngle = (angleDegrees >= 0 ? 90 - minAngleDegrees : -90 + minAngleDegrees) * Math.PI / 180;
+                return {
+                    x: speed * Math.cos(newAngle),
+                    y: speed * Math.sin(newAngle)
+                };
+            }
+            return { x: vx, y: vy };
+        }
+
+        // 速度制限関数を追加
+        function limitSpeed(vx, vy, maxSpeed) {
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            if (speed > maxSpeed) {
+                const scale = maxSpeed / speed;
+                return { x: vx * scale, y: vy * scale };
+            }
+            return { x: vx, y: vy };
+        }
+
+        // 速度の正規化関数を追加
+        function normalizeVelocity(vx, vy, minSpeed) {
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            if (speed < minSpeed) {
+                const scale = minSpeed / speed;
+                return { x: vx * scale, y: vy * scale };
+            }
+            return { x: vx, y: vy };
+        }
+
+        // スローモーション判定関数を追加
+        function checkSlowMotion() {
+            const paddleCenter = {
+                x: paddleX + paddleWidth/2,
+                y: canvas.height - paddleHeight/2
+            };
+            const distance = Math.sqrt(
+                Math.pow(x - paddleCenter.x, 2) + 
+                Math.pow(y - paddleCenter.y, 2)
+            );
+            
+            // 距離に応じて時間スケールを線形補間
+            if (distance < slowMotionDistance) {
+                const factor = distance / slowMotionDistance;
+                currentTimeScale = normalTimeScale * factor + slowTimeScale * (1 - factor);
+            } else {
+                currentTimeScale = normalTimeScale;
+            }
+        }
+
+        // Block variables を修正
+        const brickRowCount = 8;  // 行数を増やす
+        const brickColumnCount = 12;  // 列数を増やす
+        const brickWidth = 35;  // サイズを少し小さく
+        const brickHeight = 15;
+        const brickPadding = 5;  // 間隔を狭く
+        const brickOffsetTop = 20;
+        const brickOffsetLeft = 15;
+
+        // 物理演算のパラメータを修正
+        const gravity = 0;  // 重力を無効化
+        const friction = 0.99;  // 摩擦
+        const elasticity = 0.7;  // 弾性
+
+        // ブロックの色配列を追加
+        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD', '#D4A5A5', '#9B59B6', '#3498DB'];
+        
+        // ブロックの初期化を修正
+        const bricks = [];
+        for(let c=0; c < brickColumnCount; c++) {
+            bricks[c] = [];
+            for(let r=0; r < brickRowCount; r++) {
+                // ランダムにブロックを配置（80%の確率で表示）
+                const visible = Math.random() < 0.8;
+                bricks[c][r] = { 
+                    x: 0, 
+                    y: 0, 
+                    dx: 0,  // X方向の速度
+                    dy: 0,  // Y方向の速度
+                    status: visible ? 1 : 0,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    shape: Math.floor(Math.random() * 5), // 0: 四角形, 1: 円, 2: 三角形, 3: 六角形, 4: 歪三角形
+                    mass: 1 + Math.random() * 0.5,  // 質量をランダムに設定
+                    bounceCount: 0,  // 跳ね返り回数を追加
+                    rotation: 0,  // 回転角度
+                    angularVelocity: 0,  // 角速度
+                    restitution: 0.5 + Math.random() * 0.3  // 反発係数
+                };
+            }
+        }
+
+        // マウス移動のイベントリスナーを追加
+        document.addEventListener("mousemove", mouseMoveHandler);
+
+        function mouseMoveHandler(e) {
+            const relativeX = e.clientX - canvas.offsetLeft;
+            if(relativeX > 0 && relativeX < canvas.width) {
+                paddleX = relativeX - paddleWidth/2;
+                // パドルが画面外に出ないように制限
+                if(paddleX < 0) {
+                    paddleX = 0;
+                }
+                if(paddleX > canvas.width - paddleWidth) {
+                    paddleX = canvas.width - paddleWidth;
+                }
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            // グロー効果を追加
+            ctx.shadowColor = "#00FFFF";
+            ctx.shadowBlur = 15;
+            ctx.arc(x, y, ballRadius, 0, Math.PI*2);
+            // グラデーションを追加
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, ballRadius);
+            gradient.addColorStop(0, "#FFFFFF");
+            gradient.addColorStop(1, "#00FFFF");
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            ctx.closePath();
+            // グロー効果をリセット
+            ctx.shadowBlur = 0;
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.rect(paddleX, canvas.height-paddleHeight, paddleWidth, paddleHeight);
+            ctx.fillStyle = "#0095DD";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        // drawBricks関数を修正
+        function drawBricks() {
+            for(let c=0; c < brickColumnCount; c++) {
+                for(let r=0; r < brickRowCount; r++) {
+                    if(bricks[c][r].status === 1) {
+                        const brick = bricks[c][r];
+                        // 物理演算による位置を使用
+                        const brickX = brick.x || (c*(brickWidth+brickPadding))+brickOffsetLeft;
+                        const brickY = brick.y || (r*(brickHeight+brickPadding))+brickOffsetTop;
+                        brick.x = brickX;
+                        brick.y = brickY;
+                        ctx.beginPath();
+                        
+                        ctx.save();
+                        ctx.translate(brickX + brickWidth/2, brickY + brickHeight/2);
+                        ctx.rotate(brick.rotation);
+                        ctx.translate(-brickWidth/2, -brickHeight/2);
+                        
+                        switch(bricks[c][r].shape) {
+                            case 1: // 円形
+                                ctx.arc(brickWidth/2, brickHeight/2, 
+                                      Math.min(brickWidth, brickHeight)/2, 0, Math.PI*2);
+                                break;
+                            case 2: // 三角形
+                                ctx.moveTo(brickWidth/2, 0);
+                                ctx.lineTo(brickWidth, brickHeight);
+                                ctx.lineTo(0, brickHeight);
+                                break;
+                            case 3: // 六角形
+                                ctx.moveTo(brickWidth*0.25, 0);
+                                ctx.lineTo(brickWidth*0.75, 0);
+                                ctx.lineTo(brickWidth, brickHeight*0.5);
+                                ctx.lineTo(brickWidth*0.75, brickHeight);
+                                ctx.lineTo(brickWidth*0.25, brickHeight);
+                                ctx.lineTo(0, brickHeight*0.5);
+                                ctx.closePath();
+                                break;
+                            case 4: // 歪三角形
+                                ctx.moveTo(brickWidth*0.2, 0);
+                                ctx.lineTo(brickWidth, brickHeight*0.3);
+                                ctx.lineTo(brickWidth*0.3, brickHeight);
+                                break;
+                            default: // 通常の四角形
+                                ctx.rect(0, 0, brickWidth, brickHeight);
+                                break;
+                        }
+                        
+                        ctx.fillStyle = bricks[c][r].color;
+                        ctx.fill();
+                        ctx.restore();
+                        ctx.closePath();
+
+                        // 当たり判定用の頂点情報を保存
+                        bricks[c][r].vertices = getVertices(bricks[c][r].shape, brickX, brickY, brickWidth, brickHeight, brick.rotation);
+                    }
+                }
+            }
+        }
+
+        // getVertices関数を修正して回転を考慮
+        function getVertices(shape, x, y, width, height, rotation = 0) {
+            const center = { x: x + width/2, y: y + height/2 };
+            
+            // 点を回転させる補助関数
+            function rotatePoint(px, py, cx, cy, angle) {
+                const sin = Math.sin(angle);
+                const cos = Math.cos(angle);
+                const dx = px - cx;
+                const dy = py - cy;
+                return {
+                    x: cx + (dx * cos - dy * sin),
+                    y: cy + (dx * sin + dy * cos)
+                };
+            }
+
+            switch(shape) {
+                case 1: // 円
+                    return {type: 'circle', x: center.x, y: center.y, radius: Math.min(width, height)/2};
+                case 2: // 三角形
+                    const tri = [
+                        { x: x + width/2, y: y },
+                        { x: x + width, y: y + height },
+                        { x: x, y: y + height }
+                    ].map(p => rotatePoint(p.x, p.y, center.x, center.y, rotation));
+                    return tri.map(p => [p.x, p.y]);
+                case 3: // 六角形
+                    const hex = [
+                        { x: x + width*0.25, y: y },
+                        { x: x + width*0.75, y: y },
+                        { x: x + width, y: y + height*0.5 },
+                        { x: x + width*0.75, y: y + height },
+                        { x: x + width*0.25, y: y + height },
+                        { x: x, y: y + height*0.5 }
+                    ].map(p => rotatePoint(p.x, p.y, center.x, center.y, rotation));
+                    return hex.map(p => [p.x, p.y]);
+                case 4: // 歪三角形
+                    const skewTri = [
+                        { x: x + width*0.2, y: y },
+                        { x: x + width, y: y + height*0.3 },
+                        { x: x + width*0.3, y: y + height }
+                    ].map(p => rotatePoint(p.x, p.y, center.x, center.y, rotation));
+                    return skewTri.map(p => [p.x, p.y]);
+                default: // 四角形
+                    const rect = [
+                        { x: x, y: y },
+                        { x: x + width, y: y },
+                        { x: x + width, y: y + height },
+                        { x: x, y: y + height }
+                    ].map(p => rotatePoint(p.x, p.y, center.x, center.y, rotation));
+                    return rect.map(p => [p.x, p.y]);
+            }
+        }
+
+        // 図形ごとの頂点情報を取得
+        function getVertices(shape, x, y, width, height) {
+            switch(shape) {
+                case 1: // 円
+                    return {type: 'circle', x: x + width/2, y: y + height/2, radius: Math.min(width, height)/2};
+                case 2: // 三角形
+                    return [
+                        [x + width/2, y],
+                        [x + width, y + height],
+                        [x, y + height]
+                    ];
+                case 3: // 六角形
+                    return [
+                        [x + width*0.25, y],
+                        [x + width*0.75, y],
+                        [x + width, y + height*0.5],
+                        [x + width*0.75, y + height],
+                        [x + width*0.25, y + height],
+                        [x, y + height*0.5]
+                    ];
+                case 4: // 歪三角形
+                    return [
+                        [x + width*0.2, y],
+                        [x + width, y + height*0.3],
+                        [x + width*0.3, y + height]
+                    ];
+                default: // 四角形
+                    return [
+                        [x, y],
+                        [x + width, y],
+                        [x + width, y + height],
+                        [x, y + height]
+                    ];
+            }
+        }
+
+        // 図形ごとの当たり判定関数
+        function isPointInPolygon(x, y, vertices) {
+            let inside = false;
+            for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+                const xi = vertices[i][0], yi = vertices[i][1];
+                const xj = vertices[j][0], yj = vertices[j][1];
+                const intersect = ((yi > y) != (yj > y))
+                    && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // 物理演算の更新関数を簡略化
+        function updatePhysics() {
+            for(let c=0; c < brickColumnCount; c++) {
+                for(let r=0; r < brickRowCount; r++) {
+                    const brick = bricks[c][r];
+                    if(brick.status === 1) {
+                        // 速度制限を適用
+                        const limitedVelocity = limitSpeed(brick.dx, brick.dy, maxBlockSpeed);
+                        brick.dx = limitedVelocity.x;
+                        brick.dy = limitedVelocity.y;
+                        
+                        // 既存の物理更新
+                        brick.x += brick.dx * currentTimeScale;
+                        brick.y += brick.dy * currentTimeScale;
+                        brick.rotation += brick.angularVelocity * currentTimeScale;
+                        
+                        // 摩擦と減衰
+                        brick.dx *= friction;
+                        brick.dy *= friction;
+                        brick.angularVelocity *= 0.98;
+                        
+                        // 画面端での跳ね返り
+                        if(brick.x < 0 || brick.x + brickWidth > canvas.width) {
+                            brick.dx *= -elasticity;
+                            brick.x = brick.x < 0 ? 0 : canvas.width - brickWidth;
+                            brick.bounceCount++;
+                        }
+                        if(brick.y < 0 || brick.y + brickHeight > canvas.height) {
+                            brick.dy *= -elasticity;
+                            brick.y = brick.y < 0 ? 0 : canvas.height - brickHeight;
+                            brick.bounceCount++;
+                        }
+                        
+                        // 破壊判定
+                        if(brick.bounceCount >= 3) {
+                            brick.status = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // collisionDetection関数を改善
+        function collisionDetection() {
+            for(let c=0; c < brickColumnCount; c++) {
+                for(let r=0; r < brickRowCount; r++) {
+                    const brick = bricks[c][r];
+                    if(brick.status === 1) {
+                        let collision = false;
+                        let collisionPoint = { x: 0, y: 0 };
+                        let normal = { x: 0, y: 0 };
+
+                        if(Array.isArray(brick.vertices)) {
+                            collision = isPointInPolygon(x, y, brick.vertices);
+                            if(collision) {
+                                // 衝突点をボールの位置とする
+                                collisionPoint = { x: x, y: y };
+                                // 多角形の中心からボールへの方向を法線として使用
+                                const centerX = brick.x + brickWidth/2;
+                                const centerY = brick.y + brickHeight/2;
+                                const dx = x - centerX;
+                                const dy = y - centerY;
+                                const len = Math.sqrt(dx*dx + dy*dy);
+                                normal = { x: dx/len, y: dy/len };
+                            }
+                        } else if(brick.vertices && brick.vertices.type === 'circle') {
+                            const dx = x - brick.vertices.x;
+                            const dy = y - brick.vertices.y;
+                            const distance = Math.sqrt(dx*dx + dy*dy);
+                            collision = distance < brick.vertices.radius;
+                            if(collision) {
+                                // 円の中心からボールへの方向を法線として使用
+                                normal = { x: dx/distance, y: dy/distance };
+                                collisionPoint = { x: x, y: y };
+                            }
+                        }
+                        
+                        if(collision) {
+                            // 入射角に基づいた反射を計算
+                            const dotProduct = dx * normal.x + dy * normal.y;
+                            const reflection = {
+                                x: dx - 2 * dotProduct * normal.x,
+                                y: dy - 2 * dotProduct * normal.y
+                            };
+                            
+                            // ボールの速度を反射方向に設定し、上限と下限を適用
+                            const speed = Math.sqrt(dx*dx + dy*dy);
+                            const limitedSpeed = limitSpeed(reflection.x * speed, reflection.y * speed, maxBallSpeed);
+                            const normalizedSpeed = normalizeVelocity(limitedSpeed.x, limitedSpeed.y, minBallSpeed);
+                            dx = normalizedSpeed.x;
+                            dy = normalizedSpeed.y;
+
+                            // 反射後の角度を調整
+                            const adjusted = adjustVector(dx, dy);
+                            dx = adjusted.x;
+                            dy = adjusted.y;
+
+                            // ブロックへの運動量伝達を制限
+                            const impactSpeed = Math.sqrt(dx*dx + dy*dy);
+                            const blockVelocity = limitSpeed(
+                                normal.x * impactSpeed * 0.5,
+                                normal.y * impactSpeed * 0.5,
+                                maxBlockSpeed
+                            );
+                            brick.dx = blockVelocity.x;
+                            brick.dy = blockVelocity.y;
+                            
+                            // 回転も追加
+                            const impactPoint = Math.atan2(
+                                collisionPoint.y - (brick.y + brickHeight/2),
+                                collisionPoint.x - (brick.x + brickWidth/2)
+                            );
+                            brick.angularVelocity += Math.sin(impactPoint) * impactSpeed * 0.02;
+
+                            // 衝突からわずかに離す（めり込み防止）
+                            x += normal.x * 2;
+                            y += normal.y * 2;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ボールリセット関数を追加
+        // resetBall関数を修正してキー状態もリセット
+        function resetBall() {
+            x = canvas.width/2;
+            y = canvas.height-30;
+            dx = 2;
+            dy = -2;
+            paddleX = (canvas.width-paddleWidth)/2;
+        }
+
+        let requestId = null; // requestId の初期化を変更
+
+        // draw関数内の衝突処理を修正
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // スローモーション状態をチェック
+            checkSlowMotion();
+            
+            updatePhysics();  // 物理演算の更新を追加
+            drawBricks();
+            drawBall();
+            drawPaddle();
+            collisionDetection();
+
+            if(x + dx > canvas.width-ballRadius || x + dx < ballRadius) {
+                dx = -dx;
+                const adjusted = adjustVector(dx, dy);
+                dx = adjusted.x;
+                dy = adjusted.y;
+            }
+            if(y + dy < ballRadius) {
+                dy = -dy;
+                const adjusted = adjustVector(dx, dy);
+                dx = adjusted.x;
+                dy = adjusted.y;
+            } else if(y + dy > canvas.height-ballRadius) {
+                if(x > paddleX && x < paddleX + paddleWidth) {
+                    // パドルとの衝突時に角度を変える
+                    dy = -dy;
+                    // パドルの位置に応じて反射角度を変更
+                    const paddleCenter = paddleX + paddleWidth/2;
+                    const hitPos = (x - paddleX) / paddleWidth; // 0～1の値
+                    dx += (hitPos - 0.5) * 2; // パドルの端に近いほど大きく角度を変える
+                    
+                    const adjusted = adjustVector(dx, dy);
+                    dx = adjusted.x;
+                    dy = adjusted.y;
+                }
+                else {
+                    alert("GAME OVER");
+                    cancelAnimationFrame(requestId); // アニメーションを停止
+                    requestId = null; // requestId をリセット
+                    resetBall();
+                    return;
+                }
+            }
+
+            // ボールの移動前に速度を制限（上限と下限の両方を適用）
+            const limitedBallVelocity = limitSpeed(dx, dy, maxBallSpeed);
+            dx = limitedBallVelocity.x;
+            dy = limitedBallVelocity.y;
+            
+            // 最小速度を保証
+            const normalizedVelocity = normalizeVelocity(dx, dy, minBallSpeed);
+            dx = normalizedVelocity.x;
+            dy = normalizedVelocity.y;
+            
+            x += dx * currentTimeScale;
+            y += dy * currentTimeScale;
+
+            // スローモーション効果を視覚的に表現（オプション）
+            if (currentTimeScale < normalTimeScale) {
+                ctx.fillStyle = `rgba(0, 255, 255, ${(1 - currentTimeScale) * 0.1})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            requestId = requestAnimationFrame(draw);
+        }
+
+        // スペースキーのイベントハンドラーを修正
+        document.addEventListener("keydown", function(e) {
+            if(e.key === " " && !requestId) {
+                requestId = requestAnimationFrame(draw);
+            }
+        });
+
+        // 初回描画
+        requestId = requestAnimationFrame(draw);
+    </script>
+</body>
+</html>
