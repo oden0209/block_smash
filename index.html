@@ -216,8 +216,8 @@
         // updateParticles関数を修正
         function updateParticles() {
             for(let i = particles.length - 1; i >= 0; i--) {
-                // update()の戻り値で生存判定を行う
-                if(!particles[i].update()) {
+                const isAlive = particles[i].update();  // updateメソッドの戻り値で生存判定
+                if(!isAlive) {
                     particles.splice(i, 1);
                 }
             }
@@ -274,7 +274,7 @@
             ctx.closePath();
         }
 
-        // drawBricks関数を修正
+        // drawBricks関数を修���
         function drawBricks() {
             for(let c=0; c < brickColumnCount; c++) {
                 for(let r=0; r < brickRowCount; r++) {
@@ -326,7 +326,7 @@
                         ctx.restore();
                         ctx.closePath();
 
-                        // 当��り判定用の頂点情報を保存
+                        // 当��り判定用の頂点���報を保存
                         bricks[c][r].vertices = getVertices(bricks[c][r].shape, brickX, brickY, brickWidth, brickHeight, brick.rotation);
                     }
                 }
