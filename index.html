@@ -155,6 +155,77 @@
             }
         }
 
+        // Game variables の後に追加
+        // パーティクル関連の定数を修正
+        const particles = [];
+        const particleCount = 25;  // パーティクル数を増加
+        const particleLifetime = 90;  // 寿命を延長
+        const particleSize = 5;  // サイズを大きく
+
+        // Particleクラスを修正
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.lifetime = particleLifetime;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 2 + Math.random() * 4; // 速度を上げる
+                this.dx = Math.cos(angle) * speed;
+                this.dy = Math.sin(angle) * speed;
+                this.size = particleSize + Math.random() * 3; // サイズをランダムに
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.4;
+                this.alpha = 1.0;
+            }
+
+            update() {
+                this.x += this.dx;
+                this.y += this.dy;
+                this.lifetime--;
+                this.rotation += this.rotationSpeed;
+                this.size *= 0.98;
+                this.alpha = this.lifetime / particleLifetime;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // グローエフェクトを追加
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                
+                // 半透明の重なりを作成
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = `${this.color}${Math.floor(this.alpha * 255).toString(16).padStart(2, '0')}`;
+                ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
+                
+                ctx.restore();
+            }
+        }
+
+        // ブロック破壊時のパーティクル生成関数を修正してよりダイナミックなエフェクトを生成
+        function createDestroyEffect(brick) {
+            const centerX = brick.x + brickWidth/2;
+            const centerY = brick.y + brickHeight/2;
+            
+            // 破壊時の速度を反映したパーティクルも追加
+            const speedScale = Math.sqrt(brick.dx * brick.dx + brick.dy * brick.dy);
+            
+            for(let i = 0; i < particleCount; i++) {
+                const particle = new Particle(centerX, centerY, brick.color);
+                // ブロックの移動方向も考慮
+                particle.dx += brick.dx * 0.5;
+                particle.dy += brick.dy * 0.5;
+                // 速度に応じてパーティクルの初期速度を調整
+                particle.dx *= (1 + speedScale * 0.2);
+                particle.dy *= (1 + speedScale * 0.2);
+                particles.push(particle);
+            }
+        }
+
         // マウス移動のイベントリスナーを追加
         document.addEventListener("mousemove", mouseMoveHandler);
 
@@ -394,6 +465,7 @@
                         
                         // 破壊判定
                         if(brick.bounceCount >= 3) {
+                            createDestroyEffect(brick);  // パーティクル生成を追加
                             brick.status = 0;
                         }
                     }
@@ -401,7 +473,22 @@
             }
         }
 
+        // パーティクルの更新と描画処理を追加
+        function updateParticles() {
+            for(let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                if(particles[i].lifetime <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles() {
+            particles.forEach(particle => particle.draw(ctx));
+        }
+
         // collisionDetection関数を改善
+        // collisionDetection関数内のブロック反射処理を修正
         function collisionDetection() {
             for(let c=0; c < brickColumnCount; c++) {
                 for(let r=0; r < brickRowCount; r++) {
@@ -456,11 +543,11 @@
                             dx = adjusted.x;
                             dy = adjusted.y;
 
-                            // ブロックへの運動量伝達を制限
+                            // ブロックへの運動量伝達を反転
                             const impactSpeed = Math.sqrt(dx*dx + dy*dy);
                             const blockVelocity = limitSpeed(
-                                normal.x * impactSpeed * 0.5,
-                                normal.y * impactSpeed * 0.5,
+                                -normal.x * impactSpeed * 0.5, // 符号を反転
+                                -normal.y * impactSpeed * 0.5, // 符号を反転
                                 maxBlockSpeed
                             );
                             brick.dx = blockVelocity.x;
@@ -502,7 +589,10 @@
             checkSlowMotion();
             
             updatePhysics();  // 物理演算の更新を追加
+            updateParticles();  // パーティクルの更新を追加
+            
             drawBricks();
+            drawParticles();  // パーティクルの描画を追加
             drawBall();
             drawPaddle();
             collisionDetection();
